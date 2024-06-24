@@ -19,6 +19,22 @@ func TestParseSchema(t *testing.T) {
 	checkUserSchema(t, user)
 }
 
+func TestParseSchemaWithMap(t *testing.T) {
+	type User struct {
+		tests.User
+		Attrs map[string]string `gorm:"type:Map(String,String);"`
+	}
+
+	user, err := schema.Parse(&User{}, &sync.Map{}, schema.NamingStrategy{})
+	if err != nil {
+		t.Fatalf("failed to parse user with map, got error %v", err)
+	}
+
+	if field := user.FieldsByName["Attrs"]; field.DataType != "Map(String,String)" {
+		t.Errorf("failed to parse user field Attrs")
+	}
+}
+
 func TestParseSchemaWithPointerFields(t *testing.T) {
 	user, err := schema.Parse(&User{}, &sync.Map{}, schema.NamingStrategy{})
 	if err != nil {
@@ -46,8 +62,8 @@ func checkUserSchema(t *testing.T, user *schema.Schema) {
 		{Name: "Active", DBName: "active", BindNames: []string{"Active"}, DataType: schema.Bool},
 	}
 
-	for _, f := range fields {
-		checkSchemaField(t, user, &f, func(f *schema.Field) {
+	for i := range fields {
+		checkSchemaField(t, user, &fields[i], func(f *schema.Field) {
 			f.Creatable = true
 			f.Updatable = true
 			f.Readable = true
@@ -136,8 +152,8 @@ func TestParseSchemaWithAdvancedDataType(t *testing.T) {
 		{Name: "Admin", DBName: "admin", BindNames: []string{"Admin"}, DataType: schema.Bool},
 	}
 
-	for _, f := range fields {
-		checkSchemaField(t, user, &f, func(f *schema.Field) {
+	for i := range fields {
+		checkSchemaField(t, user, &fields[i], func(f *schema.Field) {
 			f.Creatable = true
 			f.Updatable = true
 			f.Readable = true
@@ -291,5 +307,46 @@ func TestEmbeddedStructForCustomizedNamingStrategy(t *testing.T) {
 				f.Readable = true
 			}
 		})
+	}
+}
+
+func TestCompositePrimaryKeyWithAutoIncrement(t *testing.T) {
+	type Product struct {
+		ProductID    uint `gorm:"primaryKey;autoIncrement"`
+		LanguageCode uint `gorm:"primaryKey"`
+		Code         string
+		Name         string
+	}
+	type ProductNonAutoIncrement struct {
+		ProductID    uint `gorm:"primaryKey;autoIncrement:false"`
+		LanguageCode uint `gorm:"primaryKey"`
+		Code         string
+		Name         string
+	}
+
+	product, err := schema.Parse(&Product{}, &sync.Map{}, schema.NamingStrategy{})
+	if err != nil {
+		t.Fatalf("failed to parse product struct with composite primary key, got error %v", err)
+	}
+
+	prioritizedPrimaryField := schema.Field{
+		Name: "ProductID", DBName: "product_id", BindNames: []string{"ProductID"}, DataType: schema.Uint, PrimaryKey: true, Size: 64, HasDefaultValue: true, AutoIncrement: true, TagSettings: map[string]string{"PRIMARYKEY": "PRIMARYKEY", "AUTOINCREMENT": "AUTOINCREMENT"},
+	}
+
+	product.Fields = []*schema.Field{product.PrioritizedPrimaryField}
+
+	checkSchemaField(t, product, &prioritizedPrimaryField, func(f *schema.Field) {
+		f.Creatable = true
+		f.Updatable = true
+		f.Readable = true
+	})
+
+	productNonAutoIncrement, err := schema.Parse(&ProductNonAutoIncrement{}, &sync.Map{}, schema.NamingStrategy{})
+	if err != nil {
+		t.Fatalf("failed to parse productNonAutoIncrement struct with composite primary key, got error %v", err)
+	}
+
+	if productNonAutoIncrement.PrioritizedPrimaryField != nil {
+		t.Fatalf("PrioritizedPrimaryField of non autoincrement composite key should be nil")
 	}
 }

@@ -35,6 +35,13 @@ func TestWhereCloneCorruption(t *testing.T) {
 	}
 }
 
+func TestNilCondition(t *testing.T) {
+	s := new(Statement)
+	if len(s.BuildCondition(nil)) != 0 {
+		t.Errorf("Nil condition should be empty")
+	}
+}
+
 func TestNameMatcher(t *testing.T) {
 	for k, v := range map[string][]string{
 		"table.name":         {"table", "name"},
@@ -49,9 +56,15 @@ func TestNameMatcher(t *testing.T) {
 		"`name_1`":           {"", "name_1"},
 		"`Name_1`":           {"", "Name_1"},
 		"`Table`.`nAme`":     {"Table", "nAme"},
+		"my_table.*":         {"my_table", "*"},
+		"`my_table`.*":       {"my_table", "*"},
+		"User__Company.*":    {"User__Company", "*"},
+		"`User__Company`.*":  {"User__Company", "*"},
+		`"User__Company".*`:  {"User__Company", "*"},
+		`"table"."*"`:        {"", ""},
 	} {
-		if matches := nameMatcher.FindStringSubmatch(k); len(matches) < 3 || matches[1] != v[0] || matches[2] != v[1] {
-			t.Errorf("failed to match value: %v, got %v, expect: %v", k, matches, v)
+		if table, column := matchName(k); table != v[0] || column != v[1] {
+			t.Errorf("failed to match value: %v, got %v, expect: %v", k, []string{table, column}, v)
 		}
 	}
 }

@@ -2,8 +2,10 @@ package tests_test
 
 import (
 	"regexp"
+	"sync"
 	"testing"
 
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/schema"
 	"gorm.io/gorm/utils/tests"
@@ -158,10 +160,11 @@ func (UserWithTableNamer) TableName(namer schema.Namer) string {
 }
 
 func TestTableWithNamer(t *testing.T) {
-	var db, _ = gorm.Open(tests.DummyDialector{}, &gorm.Config{
+	db, _ := gorm.Open(tests.DummyDialector{}, &gorm.Config{
 		NamingStrategy: schema.NamingStrategy{
 			TablePrefix: "t_",
-		}})
+		},
+	})
 
 	sql := db.ToSQL(func(tx *gorm.DB) *gorm.DB {
 		return tx.Model(&UserWithTableNamer{}).Find(&UserWithTableNamer{})
@@ -170,4 +173,89 @@ func TestTableWithNamer(t *testing.T) {
 	if !regexp.MustCompile("SELECT \\* FROM `t_users`").MatchString(sql) {
 		t.Errorf("Table with namer, got %v", sql)
 	}
+}
+
+func TestPostgresTableWithIdentifierLength(t *testing.T) {
+	if DB.Dialector.Name() != "postgres" {
+		return
+	}
+
+	type LongString struct {
+		ThisIsAVeryVeryVeryVeryVeryVeryVeryVeryVeryLongString string `gorm:"unique"`
+	}
+
+	t.Run("default", func(t *testing.T) {
+		db, _ := gorm.Open(postgres.Open(postgresDSN), &gorm.Config{})
+		user, err := schema.Parse(&LongString{}, &sync.Map{}, db.Config.NamingStrategy)
+		if err != nil {
+			t.Fatalf("failed to parse user unique, got error %v", err)
+		}
+
+		constraints := user.ParseUniqueConstraints()
+		if len(constraints) != 1 {
+			t.Fatalf("failed to find unique constraint, got %v", constraints)
+		}
+
+		for key := range constraints {
+			if len(key) != 63 {
+				t.Errorf("failed to find unique constraint, got %v", constraints)
+			}
+		}
+	})
+
+	t.Run("naming strategy", func(t *testing.T) {
+		db, _ := gorm.Open(postgres.Open(postgresDSN), &gorm.Config{
+			NamingStrategy: schema.NamingStrategy{},
+		})
+
+		user, err := schema.Parse(&LongString{}, &sync.Map{}, db.Config.NamingStrategy)
+		if err != nil {
+			t.Fatalf("failed to parse user unique, got error %v", err)
+		}
+
+		constraints := user.ParseUniqueConstraints()
+		if len(constraints) != 1 {
+			t.Fatalf("failed to find unique constraint, got %v", constraints)
+		}
+
+		for key := range constraints {
+			if len(key) != 63 {
+				t.Errorf("failed to find unique constraint, got %v", constraints)
+			}
+		}
+	})
+
+	t.Run("namer", func(t *testing.T) {
+		uname := "custom_unique_name"
+		db, _ := gorm.Open(postgres.Open(postgresDSN), &gorm.Config{
+			NamingStrategy: mockUniqueNamingStrategy{
+				UName: uname,
+			},
+		})
+
+		user, err := schema.Parse(&LongString{}, &sync.Map{}, db.Config.NamingStrategy)
+		if err != nil {
+			t.Fatalf("failed to parse user unique, got error %v", err)
+		}
+
+		constraints := user.ParseUniqueConstraints()
+		if len(constraints) != 1 {
+			t.Fatalf("failed to find unique constraint, got %v", constraints)
+		}
+
+		for key := range constraints {
+			if key != uname {
+				t.Errorf("failed to find unique constraint, got %v", constraints)
+			}
+		}
+	})
+}
+
+type mockUniqueNamingStrategy struct {
+	UName string
+	schema.NamingStrategy
+}
+
+func (a mockUniqueNamingStrategy) UniqueName(table, column string) string {
+	return a.UName
 }

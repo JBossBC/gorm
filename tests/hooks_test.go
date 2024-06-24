@@ -2,6 +2,8 @@ package tests_test
 
 import (
 	"errors"
+	"log"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -512,5 +514,98 @@ func TestFailedToSaveAssociationShouldRollback(t *testing.T) {
 
 	if productWithItem.Item.AfterFindCallTimes != 0 {
 		t.Fatalf("AfterFind should not be called times:%d", productWithItem.Item.AfterFindCallTimes)
+	}
+}
+
+type Product5 struct {
+	gorm.Model
+	Name string
+}
+
+var beforeUpdateCall int
+
+func (p *Product5) BeforeUpdate(*gorm.DB) error {
+	beforeUpdateCall = beforeUpdateCall + 1
+	return nil
+}
+
+func TestUpdateCallbacks(t *testing.T) {
+	DB.Migrator().DropTable(&Product5{})
+	DB.AutoMigrate(&Product5{})
+
+	p := Product5{Name: "unique_code"}
+	DB.Model(&Product5{}).Create(&p)
+
+	err := DB.Model(&Product5{}).Where("id", p.ID).Update("name", "update_name_1").Error
+	if err != nil {
+		t.Fatalf("should update success, but got err %v", err)
+	}
+	if beforeUpdateCall != 1 {
+		t.Fatalf("before update should be called")
+	}
+
+	err = DB.Model(Product5{}).Where("id", p.ID).Update("name", "update_name_2").Error
+	if !errors.Is(err, gorm.ErrInvalidValue) {
+		t.Fatalf("should got RecordNotFound, but got %v", err)
+	}
+	if beforeUpdateCall != 1 {
+		t.Fatalf("before update should not be called")
+	}
+
+	err = DB.Model([1]*Product5{&p}).Update("name", "update_name_3").Error
+	if err != nil {
+		t.Fatalf("should update success, but got err %v", err)
+	}
+	if beforeUpdateCall != 2 {
+		t.Fatalf("before update should be called")
+	}
+
+	err = DB.Model([1]Product5{p}).Update("name", "update_name_4").Error
+	if !errors.Is(err, gorm.ErrInvalidValue) {
+		t.Fatalf("should got RecordNotFound, but got %v", err)
+	}
+	if beforeUpdateCall != 2 {
+		t.Fatalf("before update should not be called")
+	}
+}
+
+type Product6 struct {
+	gorm.Model
+	Name string
+	Item *ProductItem2
+}
+
+type ProductItem2 struct {
+	gorm.Model
+	Product6ID uint
+}
+
+func (p *Product6) BeforeDelete(tx *gorm.DB) error {
+	if err := tx.Delete(&p.Item).Error; err != nil {
+		return err
+	}
+	return nil
+}
+
+func TestPropagateUnscoped(t *testing.T) {
+	_DB, err := OpenTestConnection(&gorm.Config{
+		PropagateUnscoped: true,
+	})
+	if err != nil {
+		log.Printf("failed to connect database, got error %v", err)
+		os.Exit(1)
+	}
+
+	_DB.Migrator().DropTable(&Product6{}, &ProductItem2{})
+	_DB.AutoMigrate(&Product6{}, &ProductItem2{})
+
+	p := Product6{
+		Name: "unique_code",
+		Item: &ProductItem2{},
+	}
+	_DB.Model(&Product6{}).Create(&p)
+
+	if err := _DB.Unscoped().Delete(&p).Error; err != nil {
+		t.Fatalf("unscoped did not propagate")
 	}
 }
